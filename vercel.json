@@ -2,8 +2,17 @@
   "cleanUrls": true,
   "rewrites": [
     {
-      "source": "/",
+      "source": "/style.css",
+      "destination": "/static/style.css"
+    },
+    {
+      "source": "/app.js",
+      "destination": "/static/app.js"
+    },
+    {
+      "source": "/(.*)",
       "destination": "/static/index.html"
     }
   ]
 }
+
