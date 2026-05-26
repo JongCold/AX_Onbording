@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AX Onboarding Automation Dashboard</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Noto+Sans+KR:wght@300;400;700&display=swap"
+        rel="stylesheet">
+    <!-- Style CSS -->
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div class="background-decorations">
+        <div class="circle circle-1"></div>
+        <div class="circle circle-2"></div>
+    </div>
+
+    <div class="dashboard-container">
+        <header class="dashboard-header">
+            <div class="logo">
+                <span class="pulse-dot"></span>
+                <h1>AX Onboarding</h1>
+            </div>
+            <p class="subtitle">단기 근로자 온보딩 및 RAG 지식베이스 자동화 관리도구</p>
+        </header>
+
+        <main class="dashboard-main">
+            <form id="onboardForm" class="glass-card" enctype="multipart/form-data">
+                <h2 class="form-title">신규 단기 근로자 등록</h2>
+
+                <div class="input-grid">
+                    <div class="input-group">
+                        <label for="workerName">근로자 이름</label>
+                        <input type="text" id="workerName" name="name" placeholder="예: 홍길동" required autocomplete="off">
+                        <span class="focus-border"></span>
+                    </div>
+
+                    <div class="input-group">
+                        <label for="workerEmail">이메일 주소</label>
+                        <input type="email" id="workerEmail" name="email" placeholder="example@email.com" required
+                            autocomplete="off">
+                        <span class="focus-border"></span>
+                    </div>
+                </div>
+
+                <div class="input-group">
+                    <div class="label-wrapper"
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <label for="slackChannel" style="margin-bottom: 0;">대상 슬랙 채널 선택</label>
+                        <button type="button" id="refreshChannelsBtn" class="btn-refresh"
+                            style="background: none; border: none; color: var(--primary-color); cursor: pointer; font-size: 0.8rem; font-weight: 600; transition: var(--transition-smooth); display: flex; align-items: center; gap: 4px;">
+                            <span>채널 목록 새로고침 🔄</span>
+                        </button>
+                    </div>
+                    <div class="select-wrapper">
+                        <select id="slackChannel" name="channel_id" required>
+                            <option value="" disabled selected>슬랙 채널 목록을 불러오는 중...</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="upload-grid">
+                    <!-- 과업지시서 업로드 영역 -->
+                    <div class="upload-box" id="taskFileBox">
+                        <div class="upload-icon">📄</div>
+                        <h3 class="upload-box-title">과업지시서 PDF</h3>
+                        <p class="upload-desc">이곳에 파일을 드래그하거나 클릭하여 업로드하세요.</p>
+                        <input type="file" id="taskFile" name="task_description_pdf" accept=".pdf" required hidden>
+                        <div class="file-info" id="taskFileInfo"></div>
+                    </div>
+
+                    <!-- 온보딩 문서 업로드 영역 -->
+                    <div class="upload-box" id="onboardFileBox">
+                        <div class="upload-icon">🎓</div>
+                        <h3 class="upload-box-title">신입사원 온보딩 가이드 PDF</h3>
+                        <p class="upload-desc">이곳에 파일을 드래그하거나 클릭하여 업로드하세요.</p>
+                        <input type="file" id="onboardFile" name="onboarding_pdf" accept=".pdf" required hidden>
+                        <div class="file-info" id="onboardFileInfo"></div>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn-submit" id="submitBtn">
+                    <span class="btn-text">온보딩 프로세스 가동</span>
+                    <span class="btn-loader" hidden></span>
+                </button>
+            </form>
+        </main>
+
+        <!-- 결과 피드백 알림 모달 -->
+        <div class="modal-overlay" id="statusModal" hidden>
+            <div class="modal-content glass-card">
+                <div class="modal-status-icon" id="modalIcon">✓</div>
+                <h3 class="modal-title" id="modalTitle">등록 완료</h3>
+                <p class="modal-message" id="modalMessage">성공적으로 온보딩 프로세스를 가동하였습니다.</p>
+                <button type="button" class="btn-close" id="modalCloseBtn">확인</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Script JS -->
+    <script src="app.js"></script>
+</body>
+
+</html>

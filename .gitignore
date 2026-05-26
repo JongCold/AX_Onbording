@@ -1,0 +1,20 @@
+# Local sensitive credentials
+.env
+token.json
+
+# Local database and cache
+pending_onboardings.json
+pending_workers.json
+chroma_db/
+downloads/
+
+# Python cache files
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# PDF files uploaded locally (to avoid bloating repo)
+*.pdf
+!온보딩.pdf
+!신입사원 온보딩.pdf
+!2. 과업지시서.pdf
