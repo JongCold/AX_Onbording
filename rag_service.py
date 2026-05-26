@@ -249,3 +249,19 @@ class RAGService:
                 return f"❌ 로컬 LLM 엔진이 응답하지 않습니다. (HTTP {response.status_code})"
         except Exception as e:
             return f"🚨 로컬 Ollama 연동 실패. 모델 상태 및 구동 여부를 확인하세요. (오류: {e})"
+
+    def list_indexed_sources(self) -> list:
+        """현재 벡터 DB에 등록된 모든 소스 파일 목록을 반환"""
+        sources = list(set([doc["metadata"]["source"] for doc in self.documents_db if "metadata" in doc and "source" in doc["metadata"]]))
+        return sorted(sources)
+
+    def delete_source(self, source_name: str) -> bool:
+        """특정 소스 이름에 해당하는 데이터를 벡터 DB에서 삭제"""
+        before_count = len(self.documents_db)
+        self.documents_db = [doc for doc in self.documents_db if doc.get("metadata", {}).get("source") != source_name]
+        after_count = len(self.documents_db)
+        if before_count != after_count:
+            self._save_db()
+            print(f"🗑️ [RAG DB Cleanup] {source_name} 소스의 청크 {before_count - after_count}개 삭제 완료.")
+            return True
+        return False

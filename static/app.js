@@ -181,6 +181,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 taskFileBox.style.background = '';
                 onboardFileBox.style.borderColor = '';
                 onboardFileBox.style.background = '';
+                if (window.loadSources) window.loadSources();
             } else {
                 showModal(true, '오류 발생', result.message || '온보딩 프로세스 시작 도중 오류가 발생했습니다.');
             }
@@ -218,4 +219,88 @@ document.addEventListener('DOMContentLoaded', () => {
             statusModal.hidden = true;
         }
     });
+
+    // --- RAG 지식 베이스 관리 스크립트 ---
+    const sourceList = document.getElementById('sourceList');
+    const refreshSourcesBtn = document.getElementById('refreshSourcesBtn');
+
+    async function loadSources() {
+        if (!sourceList) return;
+        try {
+            const response = await fetch(`${BACKEND_URL}/rag/sources`, {
+                headers: {
+                    "ngrok-skip-browser-warning": "true"
+                }
+            });
+            const data = await response.json();
+            if (response.ok && data.status === 'success') {
+                if (data.sources.length === 0) {
+                    sourceList.innerHTML = '<li class="subtitle" style="text-align: center; padding: 20px; width: 100%;">등록된 지식 베이스 파일이 없습니다.</li>';
+                    return;
+                }
+                sourceList.innerHTML = '';
+                data.sources.forEach(source => {
+                    const li = document.createElement('li');
+                    li.className = 'source-item';
+                    li.innerHTML = `
+                        <span class="source-name" title="${source}">📄 ${source}</span>
+                        <button type="button" class="btn-delete-source" data-source="${source}">삭제 🗑️</button>
+                    `;
+                    sourceList.appendChild(li);
+                });
+
+                // 삭제 버튼 이벤트 바인딩
+                const deleteBtns = sourceList.querySelectorAll('.btn-delete-source');
+                deleteBtns.forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        const targetSource = btn.getAttribute('data-source');
+                        if (confirm(`'${targetSource}' 관련 RAG 지식 베이스를 삭제하시겠습니까?\n삭제 후 복구할 수 없습니다.`)) {
+                            btn.disabled = true;
+                            btn.textContent = '삭제 중...';
+                            try {
+                                const res = await fetch(`${BACKEND_URL}/rag/sources?source=${encodeURIComponent(targetSource)}`, {
+                                    method: 'DELETE',
+                                    headers: {
+                                        "ngrok-skip-browser-warning": "true"
+                                    }
+                                });
+                                const resData = await res.json();
+                                if (res.ok && resData.status === 'success') {
+                                    showModal(false, '삭제 성공', resData.message);
+                                    loadSources();
+                                } else {
+                                    showModal(true, '삭제 실패', resData.message || '삭제 중 오류가 발생했습니다.');
+                                    btn.disabled = false;
+                                    btn.textContent = '삭제 🗑️';
+                                }
+                            } catch (err) {
+                                console.error('Delete source failed:', err);
+                                showModal(true, '오류 발생', '서버 통신 오류로 지식을 삭제하지 못했습니다.');
+                                btn.disabled = false;
+                                btn.textContent = '삭제 🗑️';
+                            }
+                        }
+                    });
+                });
+            } else {
+                sourceList.innerHTML = '<li class="subtitle" style="text-align: center; padding: 20px; color: var(--error-color); width: 100%;">목록을 로드하지 못했습니다.</li>';
+            }
+        } catch (err) {
+            console.error('Error fetching RAG sources:', err);
+            sourceList.innerHTML = '<li class="subtitle" style="text-align: center; padding: 20px; color: var(--error-color); width: 100%;">네트워크 오류가 발생했습니다.</li>';
+        }
+    }
+
+    if (refreshSourcesBtn) {
+        refreshSourcesBtn.addEventListener('click', () => {
+            sourceList.innerHTML = '<li class="subtitle" style="text-align: center; padding: 20px; width: 100%;">불러오는 중...</li>';
+            loadSources();
+        });
+    }
+
+    // 폼 제출 핸들러 등에 노출하기 위해 윈도우 스코프 또는 전역 스코프에 바인딩
+    window.loadSources = loadSources;
+
+    // 초기 실행
+    loadSources();
 });

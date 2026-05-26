@@ -116,13 +116,17 @@ def save_pending(data: dict):
     with open(PENDING_DB_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-def add_pending(email: str, name: str, channel_id: str):
-    """신입사원 정보를 대소문자 공백을 제거한 소문자 Key 포맷으로 안전하게 펜딩 저장"""
+def add_pending(email: str, name: str, channel_id: str, task_pdf_path: str = None, task_filename: str = None, onboard_pdf_path: str = None, onboard_filename: str = None):
+    """신입사원 정보를 대소문자 공백을 제거한 소문자 Key 포맷으로 안전하게 펜딩 저장하며, 업로드할 버전별 PDF 정보도 저장"""
     data = load_pending()
     normalized_email = email.strip().lower()
     data[normalized_email] = {
         "name": name,
-        "channel_name": channel_id
+        "channel_name": channel_id,
+        "task_pdf_path": task_pdf_path,
+        "task_filename": task_filename,
+        "onboard_pdf_path": onboard_pdf_path,
+        "onboard_filename": onboard_filename
     }
     save_pending(data)
 
@@ -250,11 +254,20 @@ async def onboard_web_worker(
         # 가입 완료 혹은 즉시 초대 처리
         invited = slack_service.invite_user_by_email(channel_id, email, name)
         if not invited:
-            # 워크스페이스에 아직 가입하지 않은 경우 team_join을 위해 펜딩으로 이관
-            add_pending(email, name, channel_id)
+            # 워크스페이스에 아직 가입하지 않은 경우 team_join을 위해 펜딩으로 이관 (업로드 대상 파일 정보 포함)
+            add_pending(
+                email=email,
+                name=name,
+                channel_id=channel_id,
+                task_pdf_path=local_task_pdf,
+                task_filename=local_task_filename,
+                onboard_pdf_path=local_onboard_pdf,
+                onboard_filename=local_onboard_filename
+            )
             # 가입 링크 이메일 발송
             if Config.SLACK_INVITE_URL:
                 send_invite_email(email, name, Config.SLACK_INVITE_URL)
+            return
             
         # 지정된 채널에 PDF 파일 업로드 (각각 고유한 버전을 가진 타이틀로 매핑)
         if local_task_pdf:
@@ -302,10 +315,19 @@ async def onboard_worker(request: OnboardRequest, background_tasks: BackgroundTa
             
         invited = slack_service.invite_user_by_email(channel_id, request.email, request.name)
         if not invited:
-            add_pending(request.email, request.name, channel_id)
+            add_pending(
+                email=request.email,
+                name=request.name,
+                channel_id=channel_id,
+                task_pdf_path=local_pdf,
+                task_filename="과업지시서.pdf",
+                onboard_pdf_path=os.path.join(Config.BASE_DIR, "온보딩.pdf") if os.path.exists(os.path.join(Config.BASE_DIR, "온보딩.pdf")) else None,
+                onboard_filename="온보딩.pdf"
+            )
             if Config.SLACK_INVITE_URL:
                 send_invite_email(request.email, request.name, Config.SLACK_INVITE_URL)
-        
+            return
+
         if os.path.exists(local_pdf):
             slack_service.upload_file(channel_id, local_pdf, title="과업지시서.pdf")
         
@@ -331,7 +353,16 @@ async def onboard_worker(request: OnboardRequest, background_tasks: BackgroundTa
     background_tasks.add_task(run_onboarding_process)
     return {"status": "success", "message": f"{request.name}님의 온보딩 프로세스를 백그라운드에서 실행합니다."}
 
-async def run_post_join_onboarding(user_id: str, email: str, name: str, channel_name: str):
+async def run_post_join_onboarding(
+    user_id: str,
+    email: str,
+    name: str,
+    channel_name: str,
+    task_pdf_path: str = None,
+    task_filename: str = None,
+    onboard_pdf_path: str = None,
+    onboard_filename: str = None
+):
     await asyncio.sleep(2)
     
     # 🌟 2중 방어 조치: 채널명이 고유 ID 포맷인지 검증 후 처리 고도화
@@ -363,15 +394,17 @@ async def run_post_join_onboarding(user_id: str, email: str, name: str, channel_
         print(f"[WARNING] Failed to invite user directly: {invite_err}. Attempting fallback via email...")
         slack_service.invite_user_by_email(channel_id, email, name)
     
-    local_pdf = os.path.join(Config.BASE_DIR, "2. 과업지시서.pdf")
-    if os.path.exists(local_pdf):
-        rag_service.index_pdf(local_pdf)
-        slack_service.upload_file(channel_id, local_pdf, title="과업지시서.pdf")
+    resolved_task_pdf = task_pdf_path or os.path.join(Config.BASE_DIR, "2. 과업지시서.pdf")
+    resolved_task_filename = task_filename or "과업지시서.pdf"
+    if os.path.exists(resolved_task_pdf):
+        rag_service.index_pdf(resolved_task_pdf)
+        slack_service.upload_file(channel_id, resolved_task_pdf, title=resolved_task_filename)
         
-    onboarding_pdf = os.path.join(Config.BASE_DIR, "신입사원 온보딩.pdf")
-    if os.path.exists(onboarding_pdf):
-        rag_service.index_pdf(onboarding_pdf)
-        slack_service.upload_file(channel_id, onboarding_pdf, title="신입사원 온보딩.pdf")
+    resolved_onboard_pdf = onboard_pdf_path or os.path.join(Config.BASE_DIR, "신입사원 온보딩.pdf")
+    resolved_onboard_filename = onboard_filename or "신입사원 온보딩.pdf"
+    if os.path.exists(resolved_onboard_pdf):
+        rag_service.index_pdf(resolved_onboard_pdf)
+        slack_service.upload_file(channel_id, resolved_onboard_pdf, title=resolved_onboard_filename)
     else:
         temp_onboarding = os.path.join(Config.DOWNLOAD_DIR, "신입사원_온보딩_안내.txt")
         with open(temp_onboarding, "w", encoding="utf-8") as f:
@@ -411,7 +444,29 @@ def async_rag_chat_process(channel_id: str, clean_text: str, thread_ts: str):
     slack_service.send_message(channel_id, answer, thread_ts=thread_ts)
     print("[Background Process Complete] Answer sent to Slack.")
 
+@app.get("/rag/sources")
+def get_rag_sources():
+    """현재 RAG 지식베이스에 등록된 파일 목록 조회 API"""
+    try:
+        sources = rag_service.list_indexed_sources()
+        return {"status": "success", "sources": sources}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.delete("/rag/sources")
+def delete_rag_source(source: str):
+    """특정 파일명의 지식을 RAG 지식베이스에서 삭제하는 API"""
+    try:
+        success = rag_service.delete_source(source)
+        if success:
+            return {"status": "success", "message": f"'{source}' 관련 지식이 성공적으로 제거되었습니다."}
+        else:
+            return {"status": "error", "message": f"'{source}'에 해당하는 지식을 찾을 수 없거나 삭제하지 못했습니다."}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 @app.post("/slack/events")
+
 async def slack_events(request: Request, background_tasks: BackgroundTasks):
     """슬랙 Event API Webhook 수신 엔드포인트"""
     payload = await request.json()
@@ -456,9 +511,21 @@ async def slack_events(request: Request, background_tasks: BackgroundTasks):
             pending_data = pop_pending(email)
             if pending_data:
                 target_channel = pending_data["channel_name"]
+                task_pdf_path = pending_data.get("task_pdf_path")
+                task_filename = pending_data.get("task_filename")
+                onboard_pdf_path = pending_data.get("onboard_pdf_path")
+                onboard_filename = pending_data.get("onboard_filename")
                 print(f"Detected team_join for {email}. Assigning to channel #{target_channel}...")
                 background_tasks.add_task(
-                    run_post_join_onboarding, user_id, email, name, target_channel
+                    run_post_join_onboarding,
+                    user_id,
+                    email,
+                    name,
+                    target_channel,
+                    task_pdf_path,
+                    task_filename,
+                    onboard_pdf_path,
+                    onboard_filename
                 )
         return {"status": "processing_team_join"}
 

@@ -90,7 +90,23 @@
                     <span class="btn-loader" hidden></span>
                 </button>
             </form>
+
+            <!-- RAG 지식 베이스 관리 섹션 -->
+            <section class="glass-card rag-management-card" style="margin-top: 32px;">
+                <div class="label-wrapper" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h2 class="form-title" style="margin-bottom: 0;">RAG 지식 베이스 관리</h2>
+                    <button type="button" id="refreshSourcesBtn" class="btn-refresh"
+                        style="background: none; border: none; color: var(--primary-color); cursor: pointer; font-size: 0.8rem; font-weight: 600; transition: var(--transition-smooth); display: flex; align-items: center; gap: 4px;">
+                        <span>새로고침 🔄</span>
+                    </button>
+                </div>
+                <p class="subtitle" style="margin-bottom: 20px; text-align: left;">현재 RAG DB에 임베딩되어 챗봇 답변에 활용되는 PDF 문서 목록입니다. 필요 없는 파일은 지식 베이스에서 영구히 삭제할 수 있습니다.</p>
+                <ul id="sourceList" class="source-list">
+                    <li class="subtitle" style="text-align: center; padding: 20px;">불러오는 중...</li>
+                </ul>
+            </section>
         </main>
+
 
         <!-- 결과 피드백 알림 모달 -->
         <div class="modal-overlay" id="statusModal" hidden>
