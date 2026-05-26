@@ -8,11 +8,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const submitBtn = document.getElementById('submitBtn');
     const btnText = submitBtn.querySelector('.btn-text');
     const btnLoader = submitBtn.querySelector('.btn-loader');
-    
+
     const taskFileBox = document.getElementById('taskFileBox');
     const taskFileInput = document.getElementById('taskFile');
     const taskFileInfo = document.getElementById('taskFileInfo');
-    
+
     const onboardFileBox = document.getElementById('onboardFileBox');
     const onboardFileInput = document.getElementById('onboardFile');
     const onboardFileInfo = document.getElementById('onboardFileInfo');
@@ -79,6 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const slackChannelSelect = document.getElementById('slackChannel');
     async function loadChannels() {
         try {
+            // CORS OPTIONS 예비 요청을 허용하도록 백엔드를 세팅하고, 실제 헤더로 ngrok 우회
             const response = await fetch(`${BACKEND_URL}/slack/channels`, {
                 headers: {
                     "ngrok-skip-browser-warning": "true"
@@ -87,7 +88,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await response.json();
             if (response.ok && data.status === 'success') {
                 slackChannelSelect.innerHTML = '<option value="" disabled selected>대상 슬랙 채널을 선택하세요</option>';
-                
+
                 // 새로운 채널 생성 옵션 최상단 추가
                 const newChanOption = document.createElement('option');
                 newChanOption.value = '__NEW_CHANNEL__';
@@ -121,7 +122,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Form Submission
     onboardForm.addEventListener('submit', async (e) => {
         e.preventDefault();
-        
+
         const nameVal = document.getElementById('workerName').value.trim();
         const emailVal = document.getElementById('workerEmail').value.trim();
         const channelIdVal = slackChannelSelect.value;
@@ -141,13 +142,13 @@ document.addEventListener('DOMContentLoaded', () => {
             alert('신입사원 온보딩 가이드 PDF 파일을 선택하거나 드래그 앤 드롭으로 올려주세요.');
             return;
         }
-        
+
         // Form Data Packaging
         const formData = new FormData();
         formData.append('name', nameVal);
         formData.append('email', emailVal);
         formData.append('channel_id', channelIdVal);
-        
+
         if (taskFileInput.files.length > 0) {
             formData.append('task_description_pdf', taskFileInput.files[0]);
         }
@@ -163,6 +164,9 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const response = await fetch(`${BACKEND_URL}/onboard-web`, {
                 method: 'POST',
+                headers: {
+                    "ngrok-skip-browser-warning": "true"
+                },
                 body: formData
             });
 

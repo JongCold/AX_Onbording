@@ -3,10 +3,11 @@ import json
 import asyncio
 import shutil
 import smtplib
+from collections import deque
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, Form, UploadFile, File
-from fastapi.responses import JSONResponse, PlainTextResponse, HTMLResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from config import Config
@@ -61,15 +62,21 @@ def send_invite_email(to_email: str, name: str, invite_url: str) -> bool:
 
 app = FastAPI(title="단기 근로자 온보딩 자동화 및 슬랙 RAG 챗봇 API")
 
-# 외부 프론트엔드 도메인(Vercel 등)에서 로컬 백엔드 API를 호출할 수 있도록 CORS 허용 설정
-from fastapi.middleware.cors import CORSMiddleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# 🌟 [강력 수정] ngrok 프록시 레이어의 헤더 누락을 무력화하는 무조건적 CORS 헤더 강제 주입 미들웨어
+@app.middleware("http")
+async def force_cors_middleware(request: Request, call_next):
+    # 브라우저가 보안 검증차 보낸 OPTIONS(사전 검사) 요청은 백엔드 로직을 타지 않고 즉시 빈 응답 생성
+    if request.method == "OPTIONS":
+        from fastapi.responses import Response
+        response = Response(status_code=200)
+    else:
+        response = await call_next(request)
+        
+    # ngrok의 변형/누락 여부와 관계없이 브라우저가 요구하는 CORS 통과 도장을 무조건 강제 주입
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
 
 # static 폴더 마운트
 app.mount("/static", StaticFiles(directory=os.path.join(Config.BASE_DIR, "static")), name="static")
@@ -82,8 +89,8 @@ rag_service = RAGService()
 slack_service = SlackService()
 PENDING_DB_PATH = os.path.join(Config.BASE_DIR, "pending_onboardings.json")
 
-# 🌟 최근 처리된 메시지 ID 캐시 (2중 메모리 디두플리케이션용)
-PROCESSED_MSG_IDS = set()
+# 🌟 슬랙 중복 메시지 타임아웃 재시도 차단용 고정 정밀 큐 (FIFO 200개 제한)
+PROCESSED_MSG_IDS = deque(maxlen=200)
 
 _drive_service = None
 
@@ -109,17 +116,21 @@ def save_pending(data: dict):
     with open(PENDING_DB_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-def add_pending(email: str, name: str, channel_name: str):
+def add_pending(email: str, name: str, channel_id: str):
+    """신입사원 정보를 대소문자 공백을 제거한 소문자 Key 포맷으로 안전하게 펜딩 저장"""
     data = load_pending()
-    data[email] = {
+    normalized_email = email.strip().lower()
+    data[normalized_email] = {
         "name": name,
-        "channel_name": channel_name
+        "channel_name": channel_id
     }
     save_pending(data)
 
 def pop_pending(email: str) -> dict:
+    """대소문자 오차 없이 소문자 정규화 매칭을 기반으로 대기자 데이터 인출"""
     data = load_pending()
-    val = data.pop(email, None)
+    normalized_email = email.strip().lower()
+    val = data.pop(normalized_email, None)
     if val:
         save_pending(data)
     return val
@@ -140,8 +151,6 @@ def get_versioned_filename(base_dir, original_name):
         if not os.path.exists(new_path):
             return new_path, new_filename
         version += 1
-
-from fastapi.responses import RedirectResponse
 
 @app.get("/", response_class=HTMLResponse)
 def read_root():
@@ -242,7 +251,7 @@ async def onboard_web_worker(
         invited = slack_service.invite_user_by_email(channel_id, email, name)
         if not invited:
             # 워크스페이스에 아직 가입하지 않은 경우 team_join을 위해 펜딩으로 이관
-            add_pending(email, name, channel_id) # channel_id 저장
+            add_pending(email, name, channel_id)
             # 가입 링크 이메일 발송
             if Config.SLACK_INVITE_URL:
                 send_invite_email(email, name, Config.SLACK_INVITE_URL)
@@ -288,13 +297,11 @@ async def onboard_worker(request: OnboardRequest, background_tasks: BackgroundTa
             print(f"Failed to create or find channel: {channel_name}")
             return
             
-        # 관리자(대표님)도 채널에 함께 초대하여 슬랙 화면에 즉시 노출되도록 처리
         if Config.SMTP_USER:
             slack_service.invite_user_by_email(channel_id, Config.SMTP_USER, "관리자")
             
         invited = slack_service.invite_user_by_email(channel_id, request.email, request.name)
         if not invited:
-            # 펜딩 등록 및 이메일 발송
             add_pending(request.email, request.name, channel_id)
             if Config.SLACK_INVITE_URL:
                 send_invite_email(request.email, request.name, Config.SLACK_INVITE_URL)
@@ -326,18 +333,29 @@ async def onboard_worker(request: OnboardRequest, background_tasks: BackgroundTa
 
 async def run_post_join_onboarding(user_id: str, email: str, name: str, channel_name: str):
     await asyncio.sleep(2)
+    
+    # 🌟 2중 방어 조치: 채널명이 고유 ID 포맷인지 검증 후 처리 고도화
     if channel_name.startswith("C") and len(channel_name) >= 9:
         channel_id = channel_name
     else:
-        channel_id = slack_service._find_channel_id_by_name(channel_name.lower().replace(" ", "-"))
+        # 채널명이 ID가 아닌 문자열 이름으로 들어왔을 경우를 위한 완벽 폴백 안전장치
+        channel_id = None
+        try:
+            channels = slack_service.list_public_channels()
+            target_slug = channel_name.lower().replace(" ", "-")
+            for ch in channels:
+                if ch["name"] == target_slug:
+                    channel_id = ch["id"]
+                    break
+        except Exception as e:
+            print(f"Error resolving channel name fallback: {e}")
+            
     if not channel_id:
-        print(f"Error: Target channel #{channel_name} not found for user {email}")
+        print(f"Error: Target channel {channel_name} not found for user {email}")
         return
         
-    # 가독성 확보를 위해 채널 ID로부터 채널의 실제 한글/영문 이름 역조회
     real_channel_name = slack_service.get_channel_name_by_id(channel_id)
         
-    # 이메일로 재조회하는 대신, 가입 이벤트에서 확보한 user_id를 사용해 즉시 슬랙 채널 초대 시도
     try:
         slack_service.client.conversations_invite(channel=channel_id, users=user_id)
         print(f"[SUCCESS] Invited new user {name} ({user_id}) directly to channel {channel_id}")
@@ -377,7 +395,7 @@ async def run_post_join_onboarding(user_id: str, email: str, name: str, channel_
         print(f"Error generating welcome message via Gemini: {e}")
         welcome_text = (
             f"🎉 **환영합니다, {name}님!** 🎉\n\n"
-            f"#{channel_name} 프로젝트 방에 합류하신 것을 진심으로 축하드립니다.\n"
+            f"#{real_channel_name} 프로젝트 방에 합류하신 것을 진심으로 축하드립니다.\n"
             f"채널에 업로드된 **과업지시서.pdf**와 **신입사원 온보딩.pdf** 자료를 먼저 확인해주시기 바랍니다.\n\n"
             f"💡 **업무 질문 방법**:\n"
             f"사내 지식 DB(RAG) 기반의 질문 답변을 원하시면, `@Auto_Bot1`을 언급하며 편하게 물어보세요!"
@@ -423,7 +441,6 @@ async def slack_events(request: Request, background_tasks: BackgroundTasks):
         email = profile.get("email")
         name = profile.get("real_name") or user_info.get("name")
         
-        # [보완] 프로필 이메일 정보가 누락되었을 경우, 슬랙 API로 상세 유저 정보 강제 실시간 조회
         if not email:
             try:
                 res = slack_service.client.users_info(user=user_id)
@@ -435,6 +452,7 @@ async def slack_events(request: Request, background_tasks: BackgroundTasks):
                 print(f"Error fetching user info for team_join user {user_id}: {e}")
                 
         if email:
+            # 🌟 대소문자 미스매칭 차단 로직 적용
             pending_data = pop_pending(email)
             if pending_data:
                 target_channel = pending_data["channel_name"]
@@ -444,22 +462,19 @@ async def slack_events(request: Request, background_tasks: BackgroundTasks):
                 )
         return {"status": "processing_team_join"}
 
-    # 🌟 [핵심 수정] app_mention과 message의 중복 가동 구조적 차단
+    # app_mention과 message의 중복 가동 구조적 차단
     is_dm = channel_id.startswith("D") if channel_id else False
     
     # 채널(C)일 때는 오직 app_mention만 통과, DM(D)일 때는 오직 message만 통과
     if (event_type == "app_mention" and not is_dm) or (event_type == "message" and is_dm):
         
-        # 🌟 2차 보안: 메시지 고유 ID 기반 인메모리 중복 제거 필터
+        # 🌟 2차 보안: collections.deque 기반 FIFO 중복 필터링 작동
         client_msg_id = event.get("client_msg_id")
         if client_msg_id:
             if client_msg_id in PROCESSED_MSG_IDS:
                 print(f"[Duplicate client_msg_id Filtered] ID: {client_msg_id}")
                 return {"status": "duplicated_msg_id"}
-            PROCESSED_MSG_IDS.add(client_msg_id)
-            # 캐시가 무한히 커지는 것을 방지 (최근 200개 유지)
-            if len(PROCESSED_MSG_IDS) > 200:
-                PROCESSED_MSG_IDS.pop()
+            PROCESSED_MSG_IDS.append(client_msg_id)
 
         text = event.get("text", "")
         thread_ts = event.get("thread_ts") or event.get("ts")
